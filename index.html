@@ -563,8 +563,17 @@ function focalPx(){
   return { f: Math.max(vidW, vidH) * equiv35() / 36, src: 'estimated' };
 }
 
+/* Guards against overlapping starts. startCamera awaits several times, and any
+   second invocation calls stopCamera() — which would null the shared `stream`
+   out from under the first. So each run takes a generation number, keeps its own
+   local handle, and abandons itself if a newer run has begun. */
+let camGen = 0;
 async function startCamera(deviceId){
+  const gen = ++camGen;
+  const stale = () => gen !== camGen;
   stopCamera();
+  $('btnStartCam').disabled = true;
+  let local = null;
   try {
     // First call unlocks device labels; Safari hides them until permission lands.
     const base = deviceId ? { deviceId:{ exact:deviceId } } : { facingMode:{ ideal:'environment' } };
@@ -579,19 +588,26 @@ async function startCamera(deviceId){
     ];
     let lastErr = null;
     for (const v of attempts){
-      try { stream = await navigator.mediaDevices.getUserMedia({ video:v, audio:false }); break; }
+      try { local = await navigator.mediaDevices.getUserMedia({ video:v, audio:false }); break; }
       catch(e){ lastErr = e; }
     }
-    if (!stream) throw lastErr || new Error('no camera');
+    if (!local) throw lastErr || new Error('no camera available');
+    if (stale()) { local.getTracks().forEach(t => t.stop()); return; }
 
-    video.srcObject = stream;
+    const track = local.getVideoTracks()[0];
+    if (!track) throw new Error('camera returned no video track');
+
+    stream = local;
+    video.srcObject = local;
     await video.play().catch(() => {});
+    if (stale()) { local.getTracks().forEach(t => t.stop()); return; }
 
-    const all = await navigator.mediaDevices.enumerateDevices();
+    let all = [];
+    try { all = await navigator.mediaDevices.enumerateDevices(); } catch(e){}
+    if (stale()) { local.getTracks().forEach(t => t.stop()); return; }
     cams = all.filter(d => d.kind === 'videoinput' && lensScore(d) > 0);
 
-    const track = stream.getVideoTracks()[0];
-    const st = track.getSettings();
+    const st = (track.getSettings && track.getSettings()) || {};
     curLens = cams.find(c => c.deviceId === st.deviceId)
            || cams.find(c => c.deviceId === deviceId)
            || { deviceId: st.deviceId || 'default', label: track.label || 'Back Camera' };
@@ -610,15 +626,33 @@ async function startCamera(deviceId){
       if (video.videoWidth) return r();
       video.onloadedmetadata = r; setTimeout(r, 1500);
     });
-    vidW = video.videoWidth; vidH = video.videoHeight;
+    if (stale()) { local.getTracks().forEach(t => t.stop()); return; }
+
+    // Fall back to the track's own settings if the element hasn't reported yet.
+    vidW = video.videoWidth || st.width  || 0;
+    vidH = video.videoHeight || st.height || 0;
+    if (!vidW || !vidH) throw new Error('could not read the video size');
 
     $('cam-msg').hidden = true;
     layoutVideo(); resetLines(); renderDevice();
   } catch (err) {
+    if (stale()) return;                       // a newer run owns the UI now
+    stream = null;
+    const msg = (err && err.message) ? err.message : String(err);
+    const name = err && err.name;
+    let hint;
+    if (!window.isSecureContext)
+      hint = 'This page is not on HTTPS, so the camera is blocked. Open the https:// address.';
+    else if (name === 'NotAllowedError')
+      hint = 'Camera permission was denied. Enable it in Settings → Safari → Camera, then reload.';
+    else if (name === 'NotReadableError')
+      hint = 'Another app is using the camera. Close it and try again.';
+    else
+      hint = 'Tap Start camera to try again.';
     $('cam-msg').hidden = false;
-    $('cam-msg').querySelector('p').textContent =
-      'Camera unavailable: ' + (err && err.message ? err.message : err) +
-      '. The camera needs an HTTPS page — a plain local file or http:// address will be blocked.';
+    $('cam-msg').querySelector('p').textContent = 'Camera unavailable: ' + msg + '. ' + hint;
+  } finally {
+    if (!stale()) $('btnStartCam').disabled = false;
   }
 }
 function stopCamera(){
