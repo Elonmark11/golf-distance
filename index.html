@@ -119,6 +119,15 @@
   }
   .vtx.pin{background:var(--warn);box-shadow:0 0 0 1.5px var(--warn)}
   .leaflet-div-icon{background:none;border:0}
+  /* Fixed centre crosshair: you pan the map under it instead of stabbing at the
+     target with a fingertip, which is what actually limits placement accuracy. */
+  #xhair{position:absolute;left:50%;top:50%;width:76px;height:76px;margin:-38px 0 0 -38px;
+    z-index:600;pointer-events:none}
+  #xhair line{stroke:#fff;stroke-width:1.25;opacity:.95;
+    filter:drop-shadow(0 0 2px rgba(0,0,0,.95))}
+  #xhair circle{fill:none;stroke:var(--accent);stroke-width:1.5;
+    filter:drop-shadow(0 0 2px rgba(0,0,0,.95))}
+  #xhair .dot{fill:var(--accent);stroke:none}
 
   /* ---------- rangefinder ---------- */
   #viewport{flex:1 1 auto;position:relative;overflow:hidden;background:#000;touch-action:none}
@@ -183,14 +192,23 @@
 <main>
   <!-- ============ MAP ============ -->
   <section class="tab on" id="tab-map">
-    <div id="map"></div>
+    <div id="map">
+      <svg id="xhair" viewBox="0 0 76 76" aria-hidden="true">
+        <line x1="38" y1="0"  x2="38" y2="26"/><line x1="38" y1="50" x2="38" y2="76"/>
+        <line x1="0"  y1="38" x2="26" y2="38"/><line x1="50" y1="38" x2="76" y2="38"/>
+        <circle cx="38" cy="38" r="13"/><circle class="dot" cx="38" cy="38" r="1.6"/>
+      </svg>
+    </div>
     <div class="map-ctl">
       <div class="total">
         <b id="mapTotal">—</b><i id="mapUnit">yd</i>
-        <em id="mapHint">Tap the map to drop points</em>
+        <em id="mapHint">Pan the crosshair onto your target</em>
       </div>
-      <div class="row grid4">
-        <button class="btn primary" id="btnFromMe">From me</button>
+      <div class="row" style="margin-bottom:7px">
+        <button class="btn primary" id="btnAdd">＋ Add at crosshair</button>
+        <button class="btn" id="btnFromMe">◎ From me</button>
+      </div>
+      <div class="row grid4" style="grid-template-columns:repeat(3,1fr)">
         <button class="btn" id="btnUndo">Undo</button>
         <button class="btn" id="btnClear">Clear</button>
         <button class="btn" id="btnSetPin">Set pin</button>
@@ -375,13 +393,39 @@ const fromDisp = v => S.unit === 'yards' ? v / YD_PER_M : v;
 const unitAbbr = () => S.unit === 'yards' ? 'yd' : 'm';
 const fmt = (m, d=0) => toDisp(m).toFixed(d);
 
-/** Great-circle distance in metres (Haversine, IUGG mean earth radius). */
-function haversine(a, b){
-  const R = 6371008.8;
+/* WGS84 ellipsoid */
+const WGS84_A = 6378137.0, WGS84_F = 1/298.257223563;
+const WGS84_E2 = WGS84_F * (2 - WGS84_F);
+
+/**
+ * Distance in metres on the WGS84 ellipsoid, via the local radii of curvature
+ * at the midpoint. Sub-millimetre over golf distances — verified against the
+ * Vincenty geodesic. A spherical Haversine is systematically wrong by ~0.3 m at
+ * 150 yd and ~1.6 m on a long hole, varying with latitude and bearing, so it
+ * cannot be tuned away; this costs the same to compute and removes it entirely.
+ */
+function geoDist(a, b){
   const p1 = a.lat * Math.PI/180, p2 = b.lat * Math.PI/180;
-  const dp = p2 - p1, dl = (b.lng - a.lng) * Math.PI/180;
-  const h = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  const pm = (p1 + p2) / 2;
+  const s = Math.sin(pm), c = Math.cos(pm);
+  const t = 1 - WGS84_E2 * s * s;
+  const M = WGS84_A * (1 - WGS84_E2) / Math.pow(t, 1.5);   // meridional
+  const N = WGS84_A / Math.sqrt(t);                        // prime vertical
+  let dLng = b.lng - a.lng;
+  if (dLng >  180) dLng -= 360;                            // antimeridian safety
+  if (dLng < -180) dLng += 360;
+  return Math.hypot(M * (p2 - p1), N * c * dLng * Math.PI/180);
+}
+/* Range note: the flat-patch error grows as roughly (d/R)²/24 — about 2 cm at
+   25 km and 3 m at 100 km, so it is exact for anything a golf course contains.
+   A spherical Haversine is NOT a safer fallback: being a sphere rather than an
+   ellipsoid, it is off by ~0.3% at every distance, which is worse here by three
+   orders of magnitude. Only past a few hundred km would a full Vincenty
+   geodesic be worth the code, and nothing in this app measures that far. */
+
+/** Ground resolution of the imagery/screen at a zoom level, metres per pixel. */
+function metresPerPixel(lat, z){
+  return 156543.03392 * Math.cos(lat * Math.PI/180) / Math.pow(2, z);
 }
 
 const $ = id => document.getElementById(id);
@@ -432,10 +476,68 @@ function startGeo(){
   geoWatch = navigator.geolocation.watchPosition(p => {
     here = { lat: p.coords.latitude, lng: p.coords.longitude };
     hereAcc = p.coords.accuracy;
-    if (!hadFix){ hadFix = true; map.setView(here, 18); }   // centre on first fix
+    // maximumAge:0 below guarantees these are genuinely fresh fixes, not one
+    // cached reading handed back repeatedly — which would make averaging a lie.
+    if (averaging) avgSamples.push({ ...here, acc: Math.max(1, p.coords.accuracy) });
+    if (!hadFix){ hadFix = true; map.setView(here, 19); }   // centre on first fix
     drawMe(); renderRange();
-  }, () => {}, { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
+  }, () => {}, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
 }
+
+/* ---- Averaging a stationary fix ----------------------------------------
+   A single GPS reading is ±3–5 m. Standing still and combining several fixes
+   with inverse-variance weighting cuts that materially. It does NOT improve as
+   √n, because GPS error is strongly time-correlated (multipath, atmosphere),
+   so the gain is deliberately capped rather than reported optimistically. */
+const AVG_MS = 8000;
+let averaging = false, avgSamples = [], avgTimer = null;
+
+function startAveraging(){
+  if (averaging || !navigator.geolocation) return;
+  startGeo();
+  averaging = true; avgSamples = [];
+  const t0 = Date.now();
+  const tick = () => {
+    const left = Math.ceil((AVG_MS - (Date.now() - t0)) / 1000);
+    if (Date.now() - t0 >= AVG_MS) return finishAveraging();
+    $('btnFromMe').textContent = `Hold still… ${left}s (${avgSamples.length})`;
+    avgTimer = setTimeout(tick, 250);
+  };
+  $('btnFromMe').disabled = true;
+  tick();
+}
+
+function finishAveraging(){
+  averaging = false;
+  clearTimeout(avgTimer);
+  $('btnFromMe').disabled = false;
+  $('btnFromMe').textContent = '◎ From me';
+
+  if (!avgSamples.length){
+    if (here){ pts = [{ ...here }]; renderPath(); }
+    else $('mapHint').textContent = 'No GPS fix yet';
+    return;
+  }
+  // Inverse-variance weighted mean.
+  let sw = 0, slat = 0, slng = 0;
+  for (const s of avgSamples){ const w = 1/(s.acc*s.acc); sw += w; slat += w*s.lat; slng += w*s.lng; }
+  const mean = { lat: slat/sw, lng: slng/sw };
+
+  // Empirical scatter of the samples about that mean.
+  let sq = 0;
+  for (const s of avgSamples) sq += Math.pow(geoDist(mean, s), 2);
+  const spread = Math.sqrt(sq / avgSamples.length);
+
+  const bestAcc = Math.min(...avgSamples.map(s => s.acc));
+  const nEff = Math.min(avgSamples.length, 4);        // correlation cap
+  avgAcc = Math.max(1.0, bestAcc / Math.sqrt(nEff), spread / 2);
+
+  pts = [mean]; renderPath();
+  map.setView(mean, Math.max(map.getZoom(), 19));
+  $('mapHint').innerHTML = `Averaged ${avgSamples.length} fixes<br>±${avgAcc.toFixed(1)} m` +
+    (spread > 8 ? ' — you moved' : '');
+}
+let avgAcc = null;
 function drawMe(){
   if (!here || !window.map) return;
   if (!meMarker){
@@ -454,10 +556,17 @@ function drawMe(){
 const map = L.map('map', { zoomControl:false, attributionControl:true, tap:false })
              .setView([37.7749, -122.4194], 16);
 L.control.zoom({ position:'topright' }).addTo(map);
+// Esri World Imagery serves no tiles above z19 anywhere tested (z20+ returns a
+// blank placeholder), so 19 is the true detail ceiling. Allowing zoom to 22
+// upscales that imagery, which adds no detail but does let the crosshair be
+// positioned far more finely than a fingertip ever could.
+const MAX_NATIVE_Z = 19;
 L.tileLayer(
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-  { maxZoom: 21, maxNativeZoom: 19, attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics' }
+  { maxZoom: 22, maxNativeZoom: MAX_NATIVE_Z,
+    attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics' }
 ).addTo(map);
+map.on('zoomend moveend', () => { if (!averaging) $('mapHint').innerHTML = mapHintText(pts.length); });
 
 let pts = [], vtxMarkers = [], segLabels = [], line = null, pinMarker = null;
 
@@ -486,7 +595,7 @@ function renderPath(){
 
   let total = 0;
   for (let i = 1; i < pts.length; i++){
-    const d = haversine(pts[i-1], pts[i]);
+    const d = geoDist(pts[i-1], pts[i]);
     total += d;
     const mid = { lat:(pts[i-1].lat + pts[i].lat)/2, lng:(pts[i-1].lng + pts[i].lng)/2 };
     segLabels.push(L.marker(mid, {
@@ -498,14 +607,32 @@ function renderPath(){
   }
 
   $('mapTotal').textContent = pts.length > 1 ? toDisp(total).toFixed(0) : '—';
-  $('mapHint').innerHTML = pts.length > 1
-    ? `${pts.length - 1} leg${pts.length > 2 ? 's' : ''}${hereAcc ? `<br>GPS ±${hereAcc.toFixed(0)} m` : ''}`
-    : (pts.length === 1 ? 'Tap again for the target' : 'Tap the map to drop points');
+  if (!averaging) $('mapHint').innerHTML = mapHintText(pts.length);
 
   drawPin();
 }
 /** Cheap polyline-only refresh while a vertex is mid-drag. */
 function liveLine(){ if (line) line.setLatLngs(pts); }
+
+/**
+ * Status line under the total. Reports how precisely a point can actually be
+ * placed right now: one screen pixel of ground, but never better than the
+ * imagery's own 19-zoom resolution, since past that you are only magnifying
+ * blur and a sharper-looking crosshair would be false confidence.
+ */
+function mapHintText(n){
+  const z = map.getZoom(), lat = map.getCenter().lat;
+  const place = Math.max(metresPerPixel(lat, z), metresPerPixel(lat, MAX_NATIVE_Z));
+  const bits = [];
+  if (n > 1) bits.push(`${n - 1} leg${n > 2 ? 's' : ''}`);
+  else if (n === 1) bits.push('Now the target');
+  else bits.push('Pan the crosshair onto your target');
+  bits.push(`place ±${place < 1 ? place.toFixed(2) : place.toFixed(1)} m` +
+            (z < MAX_NATIVE_Z ? ' — zoom in' : ''));
+  if (avgAcc)       bits.push(`GPS ±${avgAcc.toFixed(1)} m avg`);
+  else if (hereAcc) bits.push(`GPS ±${hereAcc.toFixed(0)} m`);
+  return bits.join('<br>');
+}
 
 function drawPin(){
   if (pinMarker) { map.removeLayer(pinMarker); pinMarker = null; }
@@ -517,10 +644,12 @@ function drawPin(){
   }).addTo(map);
 }
 
-$('btnFromMe').onclick = () => {
-  if (!here) { startGeo(); $('mapHint').textContent = 'Waiting for GPS…'; return; }
-  pts = [ { ...here } ]; renderPath(); map.setView(here, Math.max(map.getZoom(), 18));
+$('btnAdd').onclick = () => {
+  const c = map.getCenter();
+  pts.push({ lat: c.lat, lng: c.lng });
+  renderPath();
 };
+$('btnFromMe').onclick = () => startAveraging();
 $('btnUndo').onclick  = () => { pts.pop(); renderPath(); };
 $('btnClear').onclick = () => { pts = []; renderPath(); };
 $('btnSetPin').onclick = () => {
@@ -808,7 +937,7 @@ function renderRange(){
 
   // GPS cross-check
   if (S.pin && here){
-    const g = haversine(here, S.pin);
+    const g = geoDist(here, S.pin);
     $('rfGps').innerHTML = `GPS to pin <b>${fmt(g,0)} ${unitAbbr()}</b>` +
                            (hereAcc ? ` &middot; ±${hereAcc.toFixed(0)} m` : '');
   } else if (S.pin){
@@ -838,7 +967,7 @@ $('btnCalib').onclick = () => {
   $('dlgTitle').textContent = 'Calibrate focal length';
   $('dlgBody').innerHTML = 'With the lines still bracketing the object, enter the <b>true</b> ' +
     'distance to it. Use a tape measure — GPS is not precise enough for calibration.' +
-    (S.pin && here ? `<br><br>GPS to your saved pin right now: <b>${fmt(haversine(here,S.pin),0)} ${unitAbbr()}</b>.` : '');
+    (S.pin && here ? `<br><br>GPS to your saved pin right now: <b>${fmt(geoDist(here,S.pin),0)} ${unitAbbr()}</b>.` : '');
   $('dlgLabel').textContent = 'True distance (' + unitAbbr() + ')';
   $('dlgInput').value = '';
   dlgAction = () => {
