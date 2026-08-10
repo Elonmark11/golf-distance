@@ -17,6 +17,9 @@
     --safe-b:env(safe-area-inset-bottom,0px);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  /* Any selector that sets `display` outranks the UA's [hidden]{display:none}.
+     Enforce it globally so toggling .hidden in JS always actually hides. */
+  [hidden]{display:none !important}
   html,body{height:100%;margin:0;overscroll-behavior:none}
   body{
     background:var(--bg);color:var(--txt);
@@ -130,6 +133,9 @@
   .retic .tick{position:absolute;left:0;top:-7px;width:2px;height:14px;background:var(--accent)}
   #cam-msg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
     justify-content:center;gap:13px;padding:26px;text-align:center;z-index:9;background:var(--bg)}
+  /* An ID selector outranks the UA's [hidden]{display:none}, so without this the
+     opaque overlay stays on top of a working camera feed. */
+  #cam-msg[hidden]{display:none}
   #cam-msg p{margin:0;color:var(--dim);font-size:13.5px;max-width:290px;line-height:1.55}
   .readout{
     position:absolute;left:10px;bottom:10px;z-index:6;
