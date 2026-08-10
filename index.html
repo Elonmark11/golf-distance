@@ -1,0 +1,839 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0d1512">
+<title>Golf Distance Finder</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%23132019'/%3E%3Cpath d='M38 82V20l34 13-34 13' fill='%234ade80'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{
+    --bg:#0d1512; --panel:#16211c; --panel2:#1e2b25; --line:#2c3d34;
+    --txt:#eaf2ed; --dim:#8fa89b; --accent:#4ade80; --accent2:#38bdf8;
+    --warn:#fbbf24; --bad:#f87171;
+    --safe-b:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0;overscroll-behavior:none}
+  body{
+    background:var(--bg);color:var(--txt);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+    display:flex;flex-direction:column;
+    padding-top:env(safe-area-inset-top,0px);
+  }
+
+  /* ---------- header ---------- */
+  header{
+    flex:0 0 auto;display:flex;align-items:center;gap:10px;
+    padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel);
+  }
+  /* min-width:0 everywhere a flex child must be allowed to shrink — without it
+     flex items refuse to go below their content width and the page overflows. */
+  header h1{font-size:15px;font-weight:650;margin:0;flex:1 1 0;min-width:0;letter-spacing:-.01em;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .unit-toggle{display:flex;background:var(--bg);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .unit-toggle{flex:0 0 auto}
+  .unit-toggle button{
+    background:none;border:0;color:var(--dim);font:600 13px/1 inherit;
+    padding:9px 13px;cursor:pointer;transition:.15s;white-space:nowrap;
+  }
+  .unit-toggle button.on{background:var(--accent);color:#06140c}
+
+  /* ---------- tabs ---------- */
+  main{flex:1 1 auto;position:relative;overflow:hidden}
+  .tab{position:absolute;inset:0;display:none;flex-direction:column}
+  .tab.on{display:flex}
+  nav{
+    flex:0 0 auto;display:flex;border-top:1px solid var(--line);background:var(--panel);
+    padding-bottom:var(--safe-b);
+  }
+  nav button{
+    flex:1 1 0;min-width:0;background:none;border:0;color:var(--dim);cursor:pointer;
+    padding:9px 2px 7px;font:500 10.5px/1.3 inherit;
+    display:flex;flex-direction:column;align-items:center;gap:4px;
+  }
+  nav button svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round}
+  nav button.on{color:var(--accent)}
+
+  /* ---------- generic ---------- */
+  .pad{padding:14px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:13px;margin-bottom:11px}
+  .card h2{margin:0 0 3px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--dim);font-weight:650}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  /* 4-up control strip: an explicit grid so labels can never force overflow */
+  .row.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+  button.btn{
+    flex:1 1 0;min-width:0;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:10px;padding:12px 6px;font:600 13px/1.1 inherit;cursor:pointer;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .row.grid4 button.btn{font-size:12.5px;padding:12px 4px}
+  button.btn:active{background:var(--line)}
+  button.btn.primary{background:var(--accent);border-color:var(--accent);color:#06140c}
+  button.btn.ghost{background:none}
+  button.btn:disabled{opacity:.38}
+  label.field{display:block;margin:9px 0 0}
+  label.field span{display:block;font-size:11.5px;color:var(--dim);margin-bottom:5px;
+    text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  input[type=text],input[type=number],select{
+    width:100%;background:var(--bg);border:1px solid var(--line);color:var(--txt);
+    border-radius:9px;padding:11px;font:15px/1 inherit;-webkit-appearance:none
+  }
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:6px 0;
+    border-bottom:1px solid var(--line);font-size:13.5px}
+  .kv:last-child{border-bottom:0}
+  .kv span:first-child{color:var(--dim)}
+  .kv span:last-child{font-variant-numeric:tabular-nums;text-align:right;font-weight:600}
+  .note{font-size:12.5px;color:var(--dim);line-height:1.5;margin:9px 0 0}
+  .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.04em}
+  .pill.ok{background:rgba(74,222,128,.16);color:var(--accent)}
+  .pill.no{background:rgba(251,191,36,.16);color:var(--warn)}
+
+  /* ---------- map ---------- */
+  #map{flex:1 1 auto;background:#0a0f0d}
+  .leaflet-container{background:#0a0f0d;font-family:inherit}
+  .map-ctl{flex:0 0 auto;padding:10px 12px calc(10px + var(--safe-b));
+    background:var(--panel);border-top:1px solid var(--line)}
+  .total{display:flex;align-items:baseline;gap:9px;margin-bottom:9px}
+  .total b{font-size:38px;font-weight:750;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1}
+  .total i{font-style:normal;font-size:16px;color:var(--dim);font-weight:600}
+  .total em{font-style:normal;margin-left:auto;font-size:11.5px;color:var(--dim);text-align:right;
+    line-height:1.3;min-width:0;flex:0 1 auto;overflow:hidden}
+  .seg-label{
+    background:rgba(13,21,18,.9);border:1px solid var(--accent);color:var(--accent);
+    border-radius:20px;padding:2px 8px;font:700 11.5px/1.5 -apple-system,system-ui,sans-serif;
+    white-space:nowrap;box-shadow:0 1px 6px rgba(0,0,0,.5)
+  }
+  .vtx{
+    width:15px;height:15px;border-radius:50%;background:var(--accent);
+    border:2.5px solid #06140c;box-shadow:0 0 0 1.5px var(--accent)
+  }
+  .vtx.pin{background:var(--warn);box-shadow:0 0 0 1.5px var(--warn)}
+  .leaflet-div-icon{background:none;border:0}
+
+  /* ---------- rangefinder ---------- */
+  #viewport{flex:1 1 auto;position:relative;overflow:hidden;background:#000;touch-action:none}
+  #video{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);object-fit:fill}
+  .retic{position:absolute;left:0;right:0;height:0;z-index:5}
+  .retic .bar{position:absolute;left:0;right:0;top:-1px;height:2px;background:var(--accent);
+    box-shadow:0 0 5px rgba(0,0,0,.9)}
+  .retic .grab{position:absolute;right:8px;top:-21px;height:42px;padding:0 13px;
+    display:flex;align-items:center;border-radius:21px;
+    background:rgba(74,222,128,.93);color:#06140c;font:800 11px/1 -apple-system,system-ui,sans-serif;
+    letter-spacing:.06em}
+  .retic .tick{position:absolute;left:0;top:-7px;width:2px;height:14px;background:var(--accent)}
+  #cam-msg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:13px;padding:26px;text-align:center;z-index:9;background:var(--bg)}
+  #cam-msg p{margin:0;color:var(--dim);font-size:13.5px;max-width:290px;line-height:1.55}
+  .readout{
+    position:absolute;left:10px;bottom:10px;z-index:6;
+    background:rgba(13,21,18,.87);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border:1px solid var(--line);border-radius:13px;padding:11px 14px;min-width:172px
+  }
+  .readout .big{display:flex;align-items:baseline;gap:7px}
+  .readout .big b{font-size:41px;font-weight:750;letter-spacing:-.035em;
+    font-variant-numeric:tabular-nums;line-height:1}
+  .readout .big i{font-style:normal;font-size:15px;color:var(--dim);font-weight:600}
+  .readout .big u{text-decoration:none;font-size:14px;color:var(--warn);font-weight:600;
+    font-variant-numeric:tabular-nums}
+  .readout .sub{font-size:12px;color:var(--dim);margin-top:5px;font-variant-numeric:tabular-nums}
+  .readout .sub b{color:var(--accent2);font-weight:700}
+  .zoomwrap{
+    position:absolute;right:10px;left:10px;bottom:110px;z-index:6;
+    background:rgba(13,21,18,.87);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border:1px solid var(--line);border-radius:13px;padding:9px 13px;
+    touch-action:auto   /* viewport sets touch-action:none, which would kill the slider */
+  }
+  .zoomwrap .lbl{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);
+    margin-bottom:3px;font-weight:600;letter-spacing:.04em}
+  .rf-ctl{flex:0 0 auto;padding:10px 12px calc(10px + var(--safe-b));
+    background:var(--panel);border-top:1px solid var(--line)}
+  .warnbar{background:rgba(251,191,36,.13);border:1px solid rgba(251,191,36,.35);
+    color:var(--warn);border-radius:9px;padding:8px 11px;font-size:12.5px;margin-bottom:9px;line-height:1.45}
+  dialog{
+    border:1px solid var(--line);background:var(--panel);color:var(--txt);
+    border-radius:15px;padding:17px;max-width:340px;width:calc(100% - 34px)
+  }
+  dialog::backdrop{background:rgba(0,0,0,.72)}
+  dialog h3{margin:0 0 7px;font-size:16px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Golf Distance Finder</h1>
+  <div class="unit-toggle" id="unitToggle">
+    <button data-u="yards">Yards</button>
+    <button data-u="meters">Meters</button>
+  </div>
+</header>
+
+<main>
+  <!-- ============ MAP ============ -->
+  <section class="tab on" id="tab-map">
+    <div id="map"></div>
+    <div class="map-ctl">
+      <div class="total">
+        <b id="mapTotal">—</b><i id="mapUnit">yd</i>
+        <em id="mapHint">Tap the map to drop points</em>
+      </div>
+      <div class="row grid4">
+        <button class="btn primary" id="btnFromMe">From me</button>
+        <button class="btn" id="btnUndo">Undo</button>
+        <button class="btn" id="btnClear">Clear</button>
+        <button class="btn" id="btnSetPin">Set pin</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RANGEFINDER ============ -->
+  <section class="tab" id="tab-range">
+    <div id="viewport">
+      <video id="video" playsinline muted autoplay></video>
+      <div class="retic" id="retTop"><div class="bar"></div><div class="tick"></div><div class="grab">TOP</div></div>
+      <div class="retic" id="retBot"><div class="bar"></div><div class="tick"></div><div class="grab">BASE</div></div>
+
+      <div class="readout">
+        <div class="big"><b id="rfDist">—</b><i id="rfUnit">yd</i><u id="rfErr"></u></div>
+        <div class="sub" id="rfTip" style="color:var(--warn)"></div>
+        <div class="sub" id="rfGps">No pin set</div>
+      </div>
+
+      <div class="zoomwrap">
+        <div class="lbl"><span>ZOOM</span><span id="zoomVal">1.0×</span></div>
+        <input type="range" id="zoom" min="1" max="8" step="0.1" value="1">
+      </div>
+
+      <div id="cam-msg">
+        <button class="btn primary" id="btnStartCam" style="flex:0 0 auto;padding:14px 26px">Start camera</button>
+        <p>Bracket the flagstick between the two lines. Zoom in as far as you can — it directly improves accuracy.</p>
+      </div>
+    </div>
+    <div class="rf-ctl">
+      <div class="warnbar" id="calWarn" hidden></div>
+      <div class="row">
+        <button class="btn primary" id="btnCalib">Calibrate</button>
+        <button class="btn" id="btnReset">Reset lines</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DEVICE ============ -->
+  <section class="tab pad" id="tab-device">
+    <div class="card">
+      <h2>Phone</h2>
+      <label class="field">
+        <span>Profile</span>
+        <select id="profile">
+          <option value="auto">Auto-detect from lenses</option>
+          <option value="11pm">iPhone 11 Pro Max</option>
+          <option value="17">iPhone 17</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <p class="note" id="profileNote"></p>
+    </div>
+
+    <div class="card">
+      <h2>Lens</h2>
+      <label class="field">
+        <span>Active camera</span>
+        <select id="lensSel"><option>Start the camera first</option></select>
+      </label>
+      <p class="note">Lens labels stay hidden until camera permission is granted. Longest lens is
+        picked automatically — it gives the best accuracy.</p>
+    </div>
+
+    <div class="card">
+      <h2>Live status</h2>
+      <div class="kv"><span>Stream resolution</span><span id="dRes">—</span></div>
+      <div class="kv"><span>Orientation</span><span id="dOri">—</span></div>
+      <div class="kv"><span>Focal length f<sub>px</sub></span><span id="dFpx">—</span></div>
+      <div class="kv"><span>Source</span><span id="dSrc">—</span></div>
+      <div class="kv"><span>Reticle resolution</span><span id="dScale">—</span></div>
+      <div class="kv"><span>Est. error at 150 yd</span><span id="dErr">—</span></div>
+      <p class="note">You place the reticle in <em>screen</em> pixels, so a 4 K stream shown at 1×
+        wastes most of its resolution — roughly 3.6 source pixels hide behind every screen pixel.
+        Zooming is what converts that resolution into accuracy: at 150 yd it takes the error from
+        about ±16 yd at 1× to ±2 yd at 8×. Always zoom in before taking a reading.</p>
+    </div>
+
+    <div class="card">
+      <h2>Measurement</h2>
+      <label class="field">
+        <span>Flagstick height</span>
+        <div class="row" style="gap:6px">
+          <input type="number" id="stickVal" step="0.1" style="flex:2">
+          <select id="stickUnit" style="flex:1"><option value="ft">ft</option><option value="m">m</option></select>
+        </div>
+      </label>
+      <p class="note">Not standardized — the USGA only <em>recommends</em> at least 7 ft, and courses
+        use 7–8 ft. Distance scales directly with this, so an 8 ft stick assumed to be 7 ft reads 14% short.</p>
+    </div>
+
+    <div class="card">
+      <h2>Saved calibrations</h2>
+      <div id="calList"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn ghost" id="btnClearCal">Clear all calibrations</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>How to calibrate</h2>
+      <p class="note" style="margin-top:0">
+        1. Measure a tall object of known height (a door works) and enter it as the flagstick height.<br>
+        2. Stand a <em>tape-measured</em> 10 m away, bracket it, tap <b>Calibrate</b>, enter 10 m.<br>
+        3. Move to 30 m and check the reading <em>without</em> recalibrating. It must read true.<br><br>
+        Off by a constant <em>ratio</em> → focal length is wrong. Off by a constant <em>offset</em> →
+        reticle placement is wrong. Don't trust it on a course until step 3 passes.
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>Rules</h2>
+      <p class="note" style="margin-top:0">USGA Rule 4.3a(1) permits distance-measuring devices unless
+      a Local Rule forbids them. Slope-adjusted readings are not allowed — this app deliberately has
+      no slope feature, so it stays conforming.</p>
+    </div>
+  </section>
+</main>
+
+<nav id="nav">
+  <button class="on" data-t="map">
+    <svg viewBox="0 0 24 24"><path d="M9 3 3 6v15l6-3 6 3 6-3V3l-6 3-6-3zM9 3v15M15 6v15"/></svg>Map</button>
+  <button data-t="range">
+    <svg viewBox="0 0 24 24"><path d="M2 7h20v10H2zM7 7v10M17 7v10M12 3v4M12 17v4"/></svg>Rangefinder</button>
+  <button data-t="device">
+    <svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5"/><circle cx="12" cy="8" r="2.6"/><path d="M10 18h4"/></svg>Device</button>
+</nav>
+
+<dialog id="dlg">
+  <h3 id="dlgTitle">Calibrate</h3>
+  <p class="note" style="margin-top:0" id="dlgBody"></p>
+  <label class="field"><span id="dlgLabel">Distance</span>
+    <input type="number" id="dlgInput" step="0.1" inputmode="decimal"></label>
+  <div class="row" style="margin-top:13px">
+    <button class="btn" id="dlgCancel">Cancel</button>
+    <button class="btn primary" id="dlgOk">Save</button>
+  </div>
+</dialog>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+
+/* =======================================================================
+   CORE — everything internally in METERS. Convert only at render time.
+   ======================================================================= */
+const YD_PER_M = 1.0936133;
+const M_PER_FT = 0.3048;
+const SIGMA_CSS_PX = 1.5;          // reticle placement precision, CSS px
+
+const S = {                         // persisted settings
+  unit: 'yards',
+  stick_m: 7 * M_PER_FT,            // USGA-recommended minimum, 2.134 m
+  stickUnit: 'ft',                  // display only; stick_m is the truth
+  pin: null,                        // {lat,lng}
+  profile: 'auto',
+  lensId: null,
+  calib: {}                         // "label|WxH|orient" -> f_px
+};
+const LS = 'gdf.v1';
+function load(){ try{ Object.assign(S, JSON.parse(localStorage.getItem(LS)||'{}')); }catch(e){} }
+function save(){ try{ localStorage.setItem(LS, JSON.stringify(S)); }catch(e){} }
+load();
+
+const toDisp  = m => S.unit === 'yards' ? m * YD_PER_M : m;
+const fromDisp = v => S.unit === 'yards' ? v / YD_PER_M : v;
+const unitAbbr = () => S.unit === 'yards' ? 'yd' : 'm';
+const fmt = (m, d=0) => toDisp(m).toFixed(d);
+
+/** Great-circle distance in metres (Haversine, IUGG mean earth radius). */
+function haversine(a, b){
+  const R = 6371008.8;
+  const p1 = a.lat * Math.PI/180, p2 = b.lat * Math.PI/180;
+  const dp = p2 - p1, dl = (b.lng - a.lng) * Math.PI/180;
+  const h = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+const $ = id => document.getElementById(id);
+
+/* =======================================================================
+   TABS + UNITS
+   ======================================================================= */
+let activeTab = 'map';
+$('nav').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  activeTab = b.dataset.t;
+  [...$('nav').children].forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.tab').forEach(s => s.classList.toggle('on', s.id === 'tab-' + activeTab));
+  if (activeTab === 'map'){
+    setTimeout(() => map.invalidateSize(), 60);
+    startGeo();
+    stopCamera();             // free the camera when it can't be seen or configured
+  }
+  if (activeTab === 'range')  layoutVideo();
+  // The Device tab keeps the stream alive on purpose: it reports live resolution
+  // and focal length, and switching lenses there needs a running camera.
+  if (activeTab === 'device') renderDevice();
+});
+
+function renderUnits(){
+  [...$('unitToggle').children].forEach(b => b.classList.toggle('on', b.dataset.u === S.unit));
+  $('mapUnit').textContent = unitAbbr();
+  $('rfUnit').textContent  = unitAbbr();
+  renderPath(); renderRange(); renderDevice();
+}
+$('unitToggle').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  S.unit = b.dataset.u; save(); renderUnits();
+});
+
+/* =======================================================================
+   GEOLOCATION
+   ======================================================================= */
+let here = null, hereAcc = null, geoWatch = null, meMarker = null, meCircle = null;
+let hadFix = false;
+function startGeo(){
+  if (geoWatch !== null || !navigator.geolocation) return;
+  geoWatch = navigator.geolocation.watchPosition(p => {
+    here = { lat: p.coords.latitude, lng: p.coords.longitude };
+    hereAcc = p.coords.accuracy;
+    if (!hadFix){ hadFix = true; map.setView(here, 18); }   // centre on first fix
+    drawMe(); renderRange();
+  }, () => {}, { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
+}
+function drawMe(){
+  if (!here || !window.map) return;
+  if (!meMarker){
+    meCircle = L.circle(here, { radius: hereAcc, color:'#38bdf8', weight:1,
+                                fillOpacity:.12, interactive:false }).addTo(map);
+    meMarker = L.circleMarker(here, { radius:6, color:'#06140c', weight:2,
+                                fillColor:'#38bdf8', fillOpacity:1, interactive:false }).addTo(map);
+  } else {
+    meMarker.setLatLng(here); meCircle.setLatLng(here).setRadius(hereAcc);
+  }
+}
+
+/* =======================================================================
+   TAB 1 — SATELLITE MAP
+   ======================================================================= */
+const map = L.map('map', { zoomControl:false, attributionControl:true, tap:false })
+             .setView([37.7749, -122.4194], 16);
+L.control.zoom({ position:'topright' }).addTo(map);
+L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom: 21, maxNativeZoom: 19, attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics' }
+).addTo(map);
+
+let pts = [], vtxMarkers = [], segLabels = [], line = null, pinMarker = null;
+
+map.on('click', e => { pts.push({ lat:e.latlng.lat, lng:e.latlng.lng }); renderPath(); });
+
+function renderPath(){
+  vtxMarkers.forEach(m => map.removeLayer(m));  vtxMarkers = [];
+  segLabels.forEach(m => map.removeLayer(m));   segLabels = [];
+  if (line) { map.removeLayer(line); line = null; }
+
+  if (pts.length){
+    line = L.polyline(pts, { color:'#4ade80', weight:3, opacity:.95, dashArray:'1,0' }).addTo(map);
+  }
+
+  pts.forEach((p, i) => {
+    const last = i === pts.length - 1;
+    const m = L.marker(p, {
+      draggable: true,
+      icon: L.divIcon({ className:'', html:`<div class="vtx${last?' pin':''}"></div>`,
+                        iconSize:[15,15], iconAnchor:[7.5,7.5] })
+    }).addTo(map);
+    m.on('drag',    e => { pts[i] = { lat:e.latlng.lat, lng:e.latlng.lng }; liveLine(); });
+    m.on('dragend', () => renderPath());
+    vtxMarkers.push(m);
+  });
+
+  let total = 0;
+  for (let i = 1; i < pts.length; i++){
+    const d = haversine(pts[i-1], pts[i]);
+    total += d;
+    const mid = { lat:(pts[i-1].lat + pts[i].lat)/2, lng:(pts[i-1].lng + pts[i].lng)/2 };
+    segLabels.push(L.marker(mid, {
+      interactive:false,
+      icon: L.divIcon({ className:'',
+        html:`<div class="seg-label">${toDisp(d).toFixed(0)} ${unitAbbr()}</div>`,
+        iconSize:[0,0], iconAnchor:[0,8] })
+    }).addTo(map));
+  }
+
+  $('mapTotal').textContent = pts.length > 1 ? toDisp(total).toFixed(0) : '—';
+  $('mapHint').innerHTML = pts.length > 1
+    ? `${pts.length - 1} leg${pts.length > 2 ? 's' : ''}${hereAcc ? `<br>GPS ±${hereAcc.toFixed(0)} m` : ''}`
+    : (pts.length === 1 ? 'Tap again for the target' : 'Tap the map to drop points');
+
+  drawPin();
+}
+/** Cheap polyline-only refresh while a vertex is mid-drag. */
+function liveLine(){ if (line) line.setLatLngs(pts); }
+
+function drawPin(){
+  if (pinMarker) { map.removeLayer(pinMarker); pinMarker = null; }
+  if (!S.pin) return;
+  pinMarker = L.marker(S.pin, {
+    interactive:false,
+    icon: L.divIcon({ className:'', html:'<div class="vtx pin"></div>',
+                      iconSize:[15,15], iconAnchor:[7.5,7.5] })
+  }).addTo(map);
+}
+
+$('btnFromMe').onclick = () => {
+  if (!here) { startGeo(); $('mapHint').textContent = 'Waiting for GPS…'; return; }
+  pts = [ { ...here } ]; renderPath(); map.setView(here, Math.max(map.getZoom(), 18));
+};
+$('btnUndo').onclick  = () => { pts.pop(); renderPath(); };
+$('btnClear').onclick = () => { pts = []; renderPath(); };
+$('btnSetPin').onclick = () => {
+  if (!pts.length) { $('mapHint').textContent = 'Drop a point on the pin first'; return; }
+  S.pin = { ...pts[pts.length - 1] }; save(); renderPath(); renderRange();
+  $('mapHint').textContent = 'Pin saved for rangefinder';
+};
+
+/* =======================================================================
+   TAB 2 — CAMERA RANGEFINDER
+   -----------------------------------------------------------------------
+   distance = stickHeight * f_px / objectHeightPx
+   objectHeightPx is measured in SOURCE pixels, so crop-zoom cancels out:
+   a point at viewport y Y maps to source y (Y - offset)/s, and the offset
+   cancels in a difference — leaving |dY| / s.
+   ======================================================================= */
+const video = $('video');
+let stream = null, cams = [], curLens = null, zoom = 1;
+let vidW = 0, vidH = 0, scale = 1;
+let yTop = 0, yBot = 0, dragging = null;
+
+/* --- 35 mm-equivalent focal lengths per phone profile --- */
+const PROFILES = {
+  '11pm':  { name:'iPhone 11 Pro Max', lenses:{ ultra:13, wide:26, tele:52 } },
+  '17':    { name:'iPhone 17',         lenses:{ ultra:13, wide:26, tele:52 } },
+  'other': { name:'Other',             lenses:{ ultra:13, wide:26, tele:52 } }
+};
+const PROFILE_NOTES = {
+  '11pm':'Has a true 52 mm optical telephoto as a separately selectable lens — pick it for the best accuracy.',
+  '17':'No dedicated telephoto; its 2× is a crop of the 48 MP main sensor. Use the wide lens at full resolution and the zoom slider — cropping a high-res stream costs no accuracy.',
+  'other':'Using generic 13/26/52 mm estimates. Calibration corrects whatever the real value is.',
+  'auto':'Lens focal lengths are guessed from the labels iOS reports. Calibration corrects the estimate.'
+};
+
+/** Classify a camera label into ultra / wide / tele. */
+function lensKind(label){
+  const l = (label || '').toLowerCase();
+  if (l.includes('ultra'))     return 'ultra';
+  if (l.includes('telephoto')) return 'tele';
+  return 'wide';
+}
+/** Longer lens = better. Front cameras are useless here. */
+function lensScore(d){
+  const l = (d.label || '').toLowerCase();
+  if (l.includes('front')) return -1;
+  return { tele:3, wide:2, ultra:1 }[lensKind(l)];
+}
+
+function equiv35(){
+  const prof = S.profile === 'auto' ? 'other' : S.profile;
+  return PROFILES[prof].lenses[lensKind(curLens && curLens.label)];
+}
+const orientation = () => (window.innerHeight >= window.innerWidth) ? 'portrait' : 'landscape';
+const calibKey = () => curLens ? `${curLens.label||curLens.deviceId.slice(0,8)}|${vidW}x${vidH}|${orientation()}` : null;
+
+/**
+ * Focal length in pixels for the live stream.
+ * Calibrated value wins; otherwise seed from the 35 mm equivalent against a
+ * 36 mm-wide reference frame, applied to the frame's long edge.
+ */
+function focalPx(){
+  const k = calibKey();
+  if (k && S.calib[k]) return { f: S.calib[k], src: 'calibrated' };
+  if (!vidW) return { f: 0, src: 'no stream' };
+  return { f: Math.max(vidW, vidH) * equiv35() / 36, src: 'estimated' };
+}
+
+async function startCamera(deviceId){
+  stopCamera();
+  try {
+    // First call unlocks device labels; Safari hides them until permission lands.
+    const base = deviceId ? { deviceId:{ exact:deviceId } } : { facingMode:{ ideal:'environment' } };
+    const envOnly = { facingMode:{ ideal:'environment' } };
+    // Degrade one step at a time: exact lens at 4K -> exact lens any size ->
+    // rear camera at all. Safari refuses exact deviceIds on some iOS versions.
+    const attempts = [
+      { ...base,    width:{ ideal:3840 }, height:{ ideal:2160 } },
+      { ...base },
+      { ...envOnly, width:{ ideal:3840 }, height:{ ideal:2160 } },
+      { ...envOnly }
+    ];
+    let lastErr = null;
+    for (const v of attempts){
+      try { stream = await navigator.mediaDevices.getUserMedia({ video:v, audio:false }); break; }
+      catch(e){ lastErr = e; }
+    }
+    if (!stream) throw lastErr || new Error('no camera');
+
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+
+    const all = await navigator.mediaDevices.enumerateDevices();
+    cams = all.filter(d => d.kind === 'videoinput' && lensScore(d) > 0);
+
+    const track = stream.getVideoTracks()[0];
+    const st = track.getSettings();
+    curLens = cams.find(c => c.deviceId === st.deviceId)
+           || cams.find(c => c.deviceId === deviceId)
+           || { deviceId: st.deviceId || 'default', label: track.label || 'Back Camera' };
+
+    // On the very first run, hop to the longest lens now that labels are visible.
+    if (!deviceId && cams.length > 1){
+      const best = cams.slice().sort((a,b) => lensScore(b) - lensScore(a))[0];
+      if (best && best.deviceId !== curLens.deviceId){
+        S.lensId = best.deviceId; save();
+        return startCamera(best.deviceId);
+      }
+    }
+    S.lensId = curLens.deviceId; save();
+
+    await new Promise(r => {
+      if (video.videoWidth) return r();
+      video.onloadedmetadata = r; setTimeout(r, 1500);
+    });
+    vidW = video.videoWidth; vidH = video.videoHeight;
+
+    $('cam-msg').hidden = true;
+    layoutVideo(); resetLines(); renderDevice();
+  } catch (err) {
+    $('cam-msg').hidden = false;
+    $('cam-msg').querySelector('p').textContent =
+      'Camera unavailable: ' + (err && err.message ? err.message : err) +
+      '. The camera needs an HTTPS page — a plain local file or http:// address will be blocked.';
+  }
+}
+function stopCamera(){
+  if (stream){ stream.getTracks().forEach(t => t.stop()); stream = null; video.srcObject = null; }
+}
+
+/**
+ * Size the video for "cover" fit multiplied by the crop-zoom factor.
+ * The video is centred, so when the scale changes we move the reticles with it
+ * about the viewport centre. Without this, zooming — or the calibration warning
+ * appearing — would leave the lines on different source pixels and silently
+ * change the distance reading.
+ */
+function layoutVideo(){
+  const vp = $('viewport');
+  if (!vidW || !vp.clientWidth || !vp.clientHeight) return;
+  const s0 = Math.max(vp.clientWidth / vidW, vp.clientHeight / vidH);
+  const prev = scale;
+  scale = s0 * zoom;
+  video.style.width  = (vidW * scale) + 'px';
+  video.style.height = (vidH * scale) + 'px';
+
+  if (prev && prev !== scale){
+    const c = vp.clientHeight / 2, k = scale / prev;
+    yTop = c + (yTop - c) * k;
+    yBot = c + (yBot - c) * k;
+    $('retTop').style.top = yTop + 'px';
+    $('retBot').style.top = yBot + 'px';
+  }
+  renderRange();
+}
+function resetLines(){
+  const h = $('viewport').clientHeight || 400;
+  yTop = h * 0.30; yBot = h * 0.70;
+  placeLines();
+}
+function placeLines(){
+  $('retTop').style.top = yTop + 'px';
+  $('retBot').style.top = yBot + 'px';
+  renderRange();
+}
+
+/* --- reticle dragging --- */
+function bindDrag(el, which){
+  el.addEventListener('pointerdown', e => {
+    dragging = which; el.setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  el.addEventListener('pointermove', e => {
+    if (dragging !== which) return;
+    const r = $('viewport').getBoundingClientRect();
+    const y = Math.max(0, Math.min(r.height, e.clientY - r.top));
+    if (which === 'top') yTop = y; else yBot = y;
+    placeLines(); e.preventDefault();
+  });
+  const end = () => { dragging = null; };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+}
+bindDrag($('retTop'), 'top');
+bindDrag($('retBot'), 'bot');
+
+$('zoom').addEventListener('input', e => {
+  zoom = parseFloat(e.target.value);
+  $('zoomVal').textContent = zoom.toFixed(1) + '×';
+  layoutVideo();
+});
+$('btnStartCam').onclick = () => startCamera(S.lensId || null);
+$('btnReset').onclick = resetLines;
+
+/** Object height in SOURCE pixels — the quantity the whole method rests on. */
+function objectPx(){ return Math.abs(yBot - yTop) / scale; }
+
+function renderRange(){
+  const hpx = objectPx();
+  const { f, src } = focalPx();
+
+  if (!stream || !f || hpx < 1){
+    $('rfDist').textContent = '—'; $('rfErr').textContent = ''; $('rfTip').textContent = '';
+  } else {
+    const d = S.stick_m * f / hpx;
+    // You place the lines in CSS pixels, so precision in SOURCE pixels is
+    // SIGMA_CSS_PX/scale — which is why zooming genuinely improves accuracy
+    // rather than merely making the target easier to see.
+    const sigmaSrc = Math.SQRT2 * SIGMA_CSS_PX / scale;
+    const rel = sigmaSrc / hpx;
+    const err = d * rel;
+    $('rfDist').textContent = fmt(d, 0);
+    $('rfErr').textContent  = '±' + Math.max(1, Math.round(toDisp(err)));
+    // Colour-code honesty: >5% is not worth clubbing off.
+    $('rfErr').style.color = rel > 0.05 ? 'var(--bad)' : rel > 0.025 ? 'var(--warn)' : 'var(--accent)';
+    $('rfTip').textContent = (rel > 0.025 && zoom < 7.9) ? 'Zoom in to tighten this' : '';
+  }
+
+  // GPS cross-check
+  if (S.pin && here){
+    const g = haversine(here, S.pin);
+    $('rfGps').innerHTML = `GPS to pin <b>${fmt(g,0)} ${unitAbbr()}</b>` +
+                           (hereAcc ? ` &middot; ±${hereAcc.toFixed(0)} m` : '');
+  } else if (S.pin){
+    $('rfGps').textContent = 'Pin set — waiting for GPS';
+  } else {
+    $('rfGps').textContent = 'No pin set (Map → Set pin)';
+  }
+
+  const w = $('calWarn');
+  if (stream && src === 'estimated'){
+    w.hidden = false;
+    w.innerHTML = '<b>Not calibrated.</b> Running on an estimated focal length, which can be off by ' +
+                  '10–20%. Calibrate against a tape-measured distance before trusting this.';
+  } else w.hidden = true;
+}
+
+/* =======================================================================
+   CALIBRATION — invert the formula:  f_px = distance * objectPx / stick
+   ======================================================================= */
+const dlg = $('dlg');
+let dlgAction = null;
+
+$('btnCalib').onclick = () => {
+  if (!stream){ alert('Start the camera first.'); return; }
+  const hpx = objectPx();
+  if (hpx < 5){ alert('Bracket the object with the two lines first.'); return; }
+  $('dlgTitle').textContent = 'Calibrate focal length';
+  $('dlgBody').innerHTML = 'With the lines still bracketing the object, enter the <b>true</b> ' +
+    'distance to it. Use a tape measure — GPS is not precise enough for calibration.' +
+    (S.pin && here ? `<br><br>GPS to your saved pin right now: <b>${fmt(haversine(here,S.pin),0)} ${unitAbbr()}</b>.` : '');
+  $('dlgLabel').textContent = 'True distance (' + unitAbbr() + ')';
+  $('dlgInput').value = '';
+  dlgAction = () => {
+    const v = parseFloat($('dlgInput').value);
+    if (!(v > 0)) return;
+    const d = fromDisp(v);
+    const k = calibKey();
+    if (k){ S.calib[k] = d * objectPx() / S.stick_m; save(); }
+    renderRange(); renderDevice();
+  };
+  dlg.showModal();
+};
+$('dlgCancel').onclick = () => dlg.close();
+$('dlgOk').onclick = () => { if (dlgAction) dlgAction(); dlg.close(); };
+
+/* =======================================================================
+   TAB 3 — DEVICE
+   ======================================================================= */
+$('profile').onchange = e => { S.profile = e.target.value; save(); renderDevice(); renderRange(); };
+$('lensSel').onchange = e => { S.lensId = e.target.value; save(); startCamera(e.target.value); };
+$('stickVal').onchange = () => {
+  const v = parseFloat($('stickVal').value);
+  if (v > 0) S.stick_m = S.stickUnit === 'ft' ? v * M_PER_FT : v;
+  save(); renderDevice(); renderRange();
+};
+// Switching ft/m converts the displayed number; it does not change the height.
+$('stickUnit').onchange = e => { S.stickUnit = e.target.value; save(); renderDevice(); };
+$('btnClearCal').onclick = () => { S.calib = {}; save(); renderDevice(); renderRange(); };
+
+function renderDevice(){
+  $('profile').value = S.profile;
+  $('profileNote').textContent = PROFILE_NOTES[S.profile] || '';
+
+  const sel = $('lensSel');
+  if (cams.length){
+    sel.innerHTML = cams
+      .slice().sort((a,b) => lensScore(b) - lensScore(a))
+      .map(c => `<option value="${c.deviceId}">${c.label || 'Camera'}${
+        lensKind(c.label)==='tele' ? '  ★ longest' : ''}</option>`).join('');
+    if (curLens) sel.value = curLens.deviceId;
+  }
+
+  const { f, src } = focalPx();
+  $('dRes').textContent = vidW ? `${vidW} × ${vidH}` : '—';
+  $('dOri').textContent = orientation();
+  $('dFpx').textContent = f ? Math.round(f).toLocaleString() + ' px' : '—';
+  $('dSrc').innerHTML   = !vidW ? '—'
+    : (src === 'calibrated' ? '<span class="pill ok">calibrated</span>'
+                            : '<span class="pill no">estimated</span>');
+
+  // Projected error at 150 yd, at the current zoom — the number that tells you
+  // whether this setup is actually worth trusting on the course.
+  $('dScale').textContent = vidW
+    ? `${(1/scale).toFixed(2)} source px per screen px  @ ${zoom.toFixed(1)}×` : '—';
+
+  if (f && vidW){
+    const d150 = 150 / YD_PER_M;
+    const hpx  = S.stick_m * f / d150;
+    const err  = d150 * (Math.SQRT2 * SIGMA_CSS_PX / scale) / hpx;
+    $('dErr').textContent = `±${toDisp(err).toFixed(1)} ${unitAbbr()}  (stick ${hpx.toFixed(0)} px tall)`;
+    $('dErr').style.color = err/d150 > 0.05 ? 'var(--bad)'
+                          : err/d150 > 0.025 ? 'var(--warn)' : 'var(--accent)';
+  } else $('dErr').textContent = '—';
+
+  if (document.activeElement !== $('stickVal')){
+    $('stickUnit').value = S.stickUnit;
+    $('stickVal').value = (S.stickUnit === 'ft' ? S.stick_m / M_PER_FT : S.stick_m).toFixed(2);
+  }
+
+  const keys = Object.keys(S.calib);
+  $('calList').innerHTML = keys.length
+    ? keys.map(k => `<div class="kv"><span>${k.replace(/\|/g,' &middot; ')}</span><span>${Math.round(S.calib[k])} px</span></div>`).join('')
+    : '<p class="note" style="margin:0">Nothing calibrated yet.</p>';
+}
+
+/* =======================================================================
+   BOOT
+   ======================================================================= */
+window.addEventListener('resize', () => { layoutVideo(); if (activeTab==='map') map.invalidateSize(); });
+// The viewport also resizes without a window resize — the calibration warning
+// appearing, or Safari collapsing its toolbars mid-round. Both change the cover
+// fit, so re-fit whenever the box itself changes.
+if (window.ResizeObserver) new ResizeObserver(() => layoutVideo()).observe($('viewport'));
+window.addEventListener('orientationchange', () => setTimeout(() => { layoutVideo(); renderDevice(); }, 300));
+
+renderUnits();
+renderPath();
+startGeo();
+if (here) map.setView(here, 18);
+</script>
+</body>
+</html>
