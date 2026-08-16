@@ -99,8 +99,80 @@
   .pill.no{background:rgba(251,191,36,.16);color:var(--warn)}
 
   /* ---------- map ---------- */
-  #map{flex:1 1 auto;background:#0a0f0d}
+  /* The visible box. Leaflet's own container (#map) sits INSIDE it, deliberately
+     oversized, and carries the 3D transform. Everything that must stay flat and
+     screen-aligned — crosshair, compass, zoom buttons — is a sibling of #map. */
+  #mapWrap{
+    flex:1 1 auto;position:relative;overflow:hidden;background:#0a0f0d;
+    touch-action:none;                 /* we own all pointer gestures */
+    perspective:1200px;perspective-origin:50% 50%
+  }
+  /* Padding (set in JS) makes Leaflet render tiles beyond the viewport, so a
+     tilted view has ground to show near the horizon instead of grey. It is kept
+     symmetric, which is what keeps the container centre on the visible centre —
+     and therefore under the crosshair. */
+  #map{position:absolute;left:0;top:0;width:100%;height:100%;
+    transform-origin:50% 50%;transform-style:preserve-3d;will-change:transform;
+    /* .leaflet-container sets overflow:hidden, and overflow is a grouping
+       property: it would force transform-style back to flat and break the
+       billboards. #mapWrap already does the clipping, so give it up here. */
+    overflow:visible}
+  /* preserve-3d only along the path to markers: the tile pane should flatten
+     onto the ground plane, which is exactly where it belongs. */
+  #map .leaflet-map-pane,#map .leaflet-marker-pane,#map .leaflet-marker-icon{transform-style:preserve-3d}
+  /* Exact inverse of the container transform, so a label faces the camera
+     instead of lying flat on the fairway. Perspective scaling survives, which
+     reads as depth rather than as a bug.
+     The origin is the BOTTOM edge on purpose: pivoting about the centre would
+     swing the lower half below the ground plane, and in a preserve-3d scene the
+     tiles then correctly occlude it — which looks exactly like the label being
+     sliced in half. Standing it up off its base keeps it clear of the ground.
+     Markers that denote a spot on the ground are deliberately NOT billboarded:
+     they foreshorten into ellipses, which is both honest and immune to this. */
+  .billboard{transform:rotateZ(var(--bl-z,0deg)) rotateX(var(--bl-x,0deg));
+    transform-origin:50% 100%}
   .leaflet-container{background:#0a0f0d;font-family:inherit}
+  /* Tile padding is capped, so at a steep tilt the imagery does run out before
+     the top of the screen. Fade it into the background rather than ending it on
+     a hard edge — and it doubles as depth, since the far end of a hole is the
+     part you can least afford to trust anyway. */
+  #mapWrap::after{
+    content:'';position:absolute;left:0;right:0;top:0;height:34%;z-index:590;
+    pointer-events:none;opacity:0;transition:opacity .25s;
+    background:linear-gradient(to bottom,#0a0f0d 0%,rgba(10,15,13,.75) 45%,rgba(10,15,13,0) 100%)
+  }
+  #mapWrap.is3d::after{opacity:1}
+
+  /* ---------- map overlay buttons ---------- */
+  .mapbtn{
+    position:absolute;left:10px;z-index:620;width:44px;height:44px;padding:0;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+    background:rgba(13,21,18,.87);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border:1px solid var(--line);border-radius:50%;color:var(--txt);cursor:pointer
+  }
+  .mapbtn:active{background:var(--line)}
+  #compass{top:10px}
+  #compass svg{position:absolute;width:40px;height:40px;pointer-events:none}
+  #compass .n{fill:var(--bad)}
+  #compass .s{fill:#7d9488}
+  #compass b{position:relative;font:800 9.5px/1 -apple-system,system-ui,sans-serif;
+    letter-spacing:.04em;margin-top:23px;font-variant-numeric:tabular-nums}
+  #compass.follow{border-color:var(--accent2)}
+  #compass.follow b{color:var(--accent2)}
+  #btnTilt{top:62px;font:800 12px/1 -apple-system,system-ui,sans-serif;border-radius:14px;height:38px}
+  #btnTilt.on{border-color:var(--accent);color:var(--accent)}
+
+  /* ---------- me marker ---------- */
+  /* The cone is NOT billboarded: it lies flat on the ground plane and so rotates
+     and foreshortens with the map, which is what makes it read as a direction on
+     the course rather than a sticker on the screen. */
+  .me{position:relative;width:0;height:0;transform-style:preserve-3d}
+  .me-cone{position:absolute;left:-27px;top:-58px;width:54px;height:58px;
+    background:conic-gradient(from -22deg at 50% 100%,
+      rgba(56,189,248,0) 0deg,rgba(56,189,248,.55) 10deg,rgba(56,189,248,.55) 34deg,rgba(56,189,248,0) 44deg);
+    transform-origin:50% 100%;transition:opacity .2s}
+  .me-dot{position:absolute;left:-7px;top:-7px;width:14px;height:14px;border-radius:50%;
+    background:var(--accent2);border:2.5px solid #06140c;box-shadow:0 0 0 1.5px var(--accent2)}
   .map-ctl{flex:0 0 auto;padding:10px 12px calc(10px + var(--safe-b));
     background:var(--panel);border-top:1px solid var(--line)}
   .total{display:flex;align-items:baseline;gap:9px;margin-bottom:9px}
@@ -109,6 +181,10 @@
   .total em{font-style:normal;margin-left:auto;font-size:11.5px;color:var(--dim);text-align:right;
     line-height:1.3;min-width:0;flex:0 1 auto;overflow:hidden}
   .seg-label{
+    /* The marker box is 0×0 by design (the anchor is a point), so a block child
+       would size to 0 and the text would spill straight out of the pill.
+       inline-block shrink-wraps it to the text instead. */
+    display:inline-block;
     background:rgba(13,21,18,.9);border:1px solid var(--accent);color:var(--accent);
     border-radius:20px;padding:2px 8px;font:700 11.5px/1.5 -apple-system,system-ui,sans-serif;
     white-space:nowrap;box-shadow:0 1px 6px rgba(0,0,0,.5)
@@ -192,12 +268,23 @@
 <main>
   <!-- ============ MAP ============ -->
   <section class="tab on" id="tab-map">
-    <div id="map">
+    <div id="mapWrap">
+      <div id="map"></div>
       <svg id="xhair" viewBox="0 0 76 76" aria-hidden="true">
         <line x1="38" y1="0"  x2="38" y2="26"/><line x1="38" y1="50" x2="38" y2="76"/>
         <line x1="0"  y1="38" x2="26" y2="38"/><line x1="50" y1="38" x2="76" y2="38"/>
         <circle cx="38" cy="38" r="13"/><circle class="dot" cx="38" cy="38" r="1.6"/>
       </svg>
+      <button class="mapbtn" id="compass" aria-label="Compass — tap to follow your heading">
+        <svg viewBox="0 0 44 44" aria-hidden="true">
+          <g id="needle">
+            <path class="n" d="M22 6 L28.5 23 L22 20 L15.5 23 Z"/>
+            <path class="s" d="M22 38 L15.5 21 L22 24 L28.5 21 Z"/>
+          </g>
+        </svg>
+        <b id="compassLbl">N</b>
+      </button>
+      <button class="mapbtn" id="btnTilt" aria-label="Toggle 3D tilt">3D</button>
     </div>
     <div class="map-ctl">
       <div class="total">
@@ -380,6 +467,8 @@ const S = {                         // persisted settings
   res: 2160,                        // requested capture height; drop if iOS reloads the tab
   pin: null,                        // {lat,lng}
   profile: 'auto',
+  tilt: 0,                          // map pitch, degrees
+  headUp: false,                    // rotate the map to the direction you face
   lensId: null,
   calib: {}                         // "label|WxH|orient" -> f_px
 };
@@ -442,7 +531,7 @@ function showTab(name){
   [...$('nav').children].forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('.tab').forEach(s => s.classList.toggle('on', s.id === 'tab-' + activeTab));
   if (activeTab === 'map'){
-    setTimeout(() => map.invalidateSize(), 60);
+    setTimeout(() => { map.invalidateSize(); syncView(); }, 60);
     startGeo();
     stopCamera();             // free the camera when it can't be seen or configured
   }
@@ -480,6 +569,12 @@ function startGeo(){
     // cached reading handed back repeatedly — which would make averaging a lie.
     if (averaging) avgSamples.push({ ...here, acc: Math.max(1, p.coords.accuracy) });
     if (!hadFix){ hadFix = true; map.setView(here, 19); }   // centre on first fix
+    // Course over ground, but only while genuinely moving and only when the
+    // magnetometer isn't already answering: below ~0.7 m/s the reported heading
+    // is noise, and it is the direction you are WALKING, not the one you face.
+    if (!compassLive && p.coords.heading != null && p.coords.speed > 0.7){
+      pushHeading(p.coords.heading, 'gps');
+    }
     drawMe(); renderRange();
   }, () => {}, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
 }
@@ -538,24 +633,48 @@ function finishAveraging(){
     (spread > 8 ? ' — you moved' : '');
 }
 let avgAcc = null;
+let meCone = null;
 function drawMe(){
   if (!here || !window.map) return;
   if (!meMarker){
+    // The accuracy circle is a real SVG path in the overlay pane, so it lies on
+    // the ground plane and goes elliptical under tilt — which is correct.
     meCircle = L.circle(here, { radius: hereAcc, color:'#38bdf8', weight:1,
                                 fillOpacity:.12, interactive:false }).addTo(map);
-    meMarker = L.circleMarker(here, { radius:6, color:'#06140c', weight:2,
-                                fillColor:'#38bdf8', fillOpacity:1, interactive:false }).addTo(map);
+    meMarker = L.marker(here, {
+      interactive:false, keyboard:false,
+      icon: L.divIcon({ className:'', iconSize:[0,0], iconAnchor:[0,0],
+        html:'<div class="me"><div class="me-cone"></div><div class="me-dot"></div></div>' })
+    }).addTo(map);
+    meCone = meMarker.getElement().querySelector('.me-cone');
   } else {
     meMarker.setLatLng(here); meCircle.setLatLng(here).setRadius(hereAcc);
   }
+  drawHeadingCone();
+}
+
+/** Point the cone along the heading. It lives in the ground plane, so the angle
+    is absolute (north-up) and the map's own rotation carries it to the screen. */
+function drawHeadingCone(){
+  if (!meCone) return;
+  meCone.style.opacity   = heading === null ? '0' : '1';
+  meCone.style.transform = `rotateZ(${heading === null ? 0 : heading}deg)`;
 }
 
 /* =======================================================================
    TAB 1 — SATELLITE MAP
    ======================================================================= */
-const map = L.map('map', { zoomControl:false, attributionControl:true, tap:false })
-             .setView([37.7749, -122.4194], 16);
+const map = L.map('map', {
+  zoomControl:false, attributionControl:true, tap:false,
+  zoomSnap: 0,                 // pinch produces fractional zoom; don't fight it
+  dragging: false,             // replaced below — Leaflet's pans in untransformed
+  touchZoom: false,            // screen space, which rotation and tilt invalidate
+  boxZoom: false               // it owns shift-drag, which is the desktop rotate
+}).setView([37.7749, -122.4194], 16);
 L.control.zoom({ position:'topright' }).addTo(map);
+// Controls must not tilt with the ground. They live in .leaflet-control-container,
+// a child of the transformed container, so lift the whole thing out to the wrapper.
+$('mapWrap').appendChild($('map').querySelector('.leaflet-control-container'));
 // Esri World Imagery serves no tiles above z19 anywhere tested (z20+ returns a
 // blank placeholder), so 19 is the true detail ceiling. Allowing zoom to 22
 // upscales that imagery, which adds no detail but does let the crosshair be
@@ -570,7 +689,393 @@ map.on('zoomend moveend', () => { if (!averaging) $('mapHint').innerHTML = mapHi
 
 let pts = [], vtxMarkers = [], segLabels = [], line = null, pinMarker = null;
 
-map.on('click', e => { pts.push({ lat:e.latlng.lat, lng:e.latlng.lng }); renderPath(); });
+/* =======================================================================
+   1a — 3D VIEW: BEARING + TILT
+   -----------------------------------------------------------------------
+   Leaflet has no rotation or pitch, so the container itself is transformed:
+
+       perspective(P) · rotateX(tilt) · rotateZ(-bearing)
+
+   about the centre of the VISIBLE box. Two consequences carry the design:
+
+   • The centre is the one point the transform leaves fixed, so the crosshair
+     still marks map.getCenter() exactly, at any tilt or bearing. Every
+     distance stays a latlng computation and is untouched by the view.
+   • Everything else — taps, panning, pinch, vertex drags — arrives in screen
+     coordinates that no longer match Leaflet's container coordinates. `inv()`
+     below is the exact inverse of the matrix above; overriding
+     mouseEventToContainerPoint with it repairs Leaflet's own event handling,
+     and the gesture controller uses it directly for the rest.
+   ======================================================================= */
+const RAD = Math.PI / 180;
+const MAX_TILT = 50;              // past this the horizon swallows the top of the view
+const TILT_3D  = 45;              // what the 2D/3D button snaps to
+// Padding is derived, not guessed (see syncView), but it still needs a ceiling:
+// a tilted view sees to the horizon, and paying for every tile out to it would
+// cost far more cellular data than the extra ground is worth on a golf course.
+const PAD_STEP = 96, PAD_MAX_X = 0.75, PAD_MAX_Y = 0.95;
+
+let bearing = 0, tilt = 0;
+let vW = 1, vH = 1, padX = 0, padY = 0, persp = 1200;
+
+const norm360 = d => ((d % 360) + 360) % 360;
+/** Signed shortest turn from `from` to `to`, in (-180, 180]. */
+const angDiff = (to, from) => { let d = norm360(to - from); return d > 180 ? d - 360 : d; };
+const is3d = () => tilt > 0.5 || Math.abs(angDiff(bearing, 0)) > 0.5;
+
+/** Leaflet container point → point in the visible box (origin at its top-left). */
+function fwd(cx, cy){
+  const x = cx - (vW/2 + padX), y = cy - (vH/2 + padY);
+  const t = -bearing * RAD, a = tilt * RAD;
+  const c = Math.cos(t), s = Math.sin(t);
+  const u = x*c - y*s, v = x*s + y*c;          // rotateZ
+  const z = v * Math.sin(a);                   // rotateX lifts it out of the plane
+  const k = persp / (persp - z);               // perspective divide
+  return L.point(u*k + vW/2, v*Math.cos(a)*k + vH/2);
+}
+
+/** Inverse of fwd(), but in centre-relative coordinates — which is what sizing
+    the container needs, since that must be computed before padX/padY exist. */
+function invRel(sx, sy){
+  const X = sx - vW/2, Y = sy - vH/2;
+  const t = -bearing * RAD, a = tilt * RAD;
+  // Solving Y = v·cos a · P/(P − v·sin a) for v. The denominator vanishes at the
+  // horizon; clamp rather than divide, so a stray touch above it can't produce
+  // an infinite coordinate.
+  const den = persp * Math.cos(a) + Y * Math.sin(a);
+  const v = den > 1 ? (Y * persp) / den : Y / Math.max(Math.cos(a), 1e-3);
+  const u = X * (persp - v * Math.sin(a)) / persp;
+  const c = Math.cos(t), s = Math.sin(t);
+  return { x: u*c + v*s, y: -u*s + v*c };
+}
+
+/** Point in the visible box → Leaflet container point. Exact inverse of fwd(). */
+function inv(sx, sy){
+  const p = invRel(sx, sy);
+  return L.point(p.x + vW/2 + padX, p.y + vH/2 + padY);
+}
+
+/** Read the visible box. This is the only DOM *read* here, so it is kept out of
+    the per-frame path — measuring every frame would force a layout flush right
+    before we write styles, which is the classic thrash. */
+function measureBox(){
+  const r = $('mapWrap').getBoundingClientRect();
+  vW = Math.max(1, r.width); vH = Math.max(1, r.height);
+  persp = Math.max(700, vH * 1.6);
+  $('mapWrap').style.perspective = persp + 'px';
+}
+
+/**
+ * Size the Leaflet container so it covers the whole visible box once projected.
+ *
+ * The container must hold the *preimage* of the screen. Because this is a
+ * projective map, straight lines stay straight, so the preimage of the visible
+ * rectangle is a quadrilateral and its four corners bound it exactly — no
+ * guessed padding fraction, which is what left black wedges near the horizon.
+ * Quantised to PAD_STEP so rotating does not relayout on every frame, and capped
+ * so a steep tilt cannot demand tiles all the way to the horizon (the cap is
+ * what the #mapWrap.is3d fade at the top covers for).
+ *
+ * Pure arithmetic on already-measured values — no DOM reads.
+ */
+function syncPad(){
+  const on = is3d();
+  $('mapWrap').classList.toggle('is3d', on);
+
+  let mx = vW/2, my = vH/2;
+  if (on){
+    for (const [sx, sy] of [[0,0],[vW,0],[0,vH],[vW,vH]]){
+      const p = invRel(sx, sy);
+      mx = Math.max(mx, Math.abs(p.x)); my = Math.max(my, Math.abs(p.y));
+    }
+  }
+  const step = (need, half, cap) =>
+    Math.min(Math.ceil(Math.max(0, need - half) / PAD_STEP) * PAD_STEP, cap);
+  const nx = step(mx, vW/2, PAD_MAX_X * vW), ny = step(my, vH/2, PAD_MAX_Y * vH);
+
+  const el = $('map');
+  if (nx === padX && ny === padY && el.style.width) return;
+  padX = nx; padY = ny;
+  el.style.left = -padX + 'px';   el.style.top    = -padY + 'px';
+  el.style.width = (vW + 2*padX) + 'px'; el.style.height = (vH + 2*padY) + 'px';
+  map.invalidateSize({ pan:false });   // keeps the centre, so the crosshair holds
+}
+
+function syncView(){ measureBox(); syncPad(); }
+
+map.mouseEventToContainerPoint = function(e){
+  const r = $('mapWrap').getBoundingClientRect();
+  return inv(e.clientX - r.left, e.clientY - r.top);
+};
+
+function applyTransform(){
+  syncPad();
+  $('map').style.transform = `rotateX(${tilt}deg) rotateZ(${-bearing}deg)`;
+  const w = $('mapWrap').style;
+  w.setProperty('--bl-z', bearing + 'deg');    // billboards undo it, in reverse
+  w.setProperty('--bl-x', (-tilt) + 'deg');
+  $('needle').setAttribute('transform', `rotate(${-bearing} 22 22)`);
+  $('btnTilt').classList.toggle('on', tilt > 1);
+  $('btnTilt').textContent = tilt > 1 ? '2D' : '3D';
+}
+
+function setTilt(v, persist){
+  tilt = Math.min(MAX_TILT, Math.max(0, v));
+  applyTransform();
+  if (persist){ S.tilt = Math.round(tilt); save(); }
+}
+function animTilt(target){
+  const from = tilt, t0 = performance.now(), dur = 320;
+  const step = now => {
+    const k = Math.min(1, (now - t0) / dur);
+    const e = k < .5 ? 2*k*k : 1 - Math.pow(-2*k + 2, 2)/2;
+    setTilt(from + (target - from) * e, false);
+    if (k < 1) requestAnimationFrame(step); else { S.tilt = Math.round(tilt); save(); }
+  };
+  requestAnimationFrame(step);
+}
+
+/* ---- Heading, and following it -------------------------------------- */
+let heading = null, compassLive = false, headUp = false, bearingRaf = 0;
+
+function pushHeading(h, src){
+  if (h == null || isNaN(h)) return;
+  h = norm360(h);
+  if (src === 'compass') compassLive = true;
+  // Low-pass on the circle. A magnetometer jitters several degrees at rest, and
+  // an unsmoothed value would make both the cone and the whole map twitch.
+  heading = heading === null ? h : norm360(heading + angDiff(h, heading) * 0.22);
+  drawHeadingCone();
+  renderCompass();
+  if (headUp) requestBearing();
+}
+
+function requestBearing(){ if (!bearingRaf) bearingRaf = requestAnimationFrame(tickBearing); }
+function tickBearing(){
+  bearingRaf = 0;
+  if (!headUp || heading === null) return;
+  const d = angDiff(heading, bearing);
+  if (Math.abs(d) < 0.15){ bearing = heading; applyTransform(); return; }
+  bearing = norm360(bearing + d * 0.18);       // critically boring easing
+  applyTransform();
+  bearingRaf = requestAnimationFrame(tickBearing);
+}
+
+function onOrient(e){
+  let h = null;
+  if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)){
+    h = e.webkitCompassHeading;                // iOS: already true-north heading
+  } else if (e.absolute && typeof e.alpha === 'number'){
+    h = 360 - e.alpha;                         // spec: alpha counts anticlockwise
+  }
+  if (h === null) return;
+  // alpha/webkitCompassHeading are relative to the DEVICE top, not the page top.
+  const so = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+  pushHeading(h + so, 'compass');
+}
+
+/** iOS 13+ gates the magnetometer behind a permission prompt that only a real
+    user gesture may raise, which is why this hangs off the compass button. */
+async function enableCompass(){
+  const D = window.DeviceOrientationEvent;
+  if (!D){ $('mapHint').textContent = 'No compass on this device'; return false; }
+  if (typeof D.requestPermission === 'function'){
+    try {
+      if (await D.requestPermission() !== 'granted'){
+        $('mapHint').textContent = 'Compass permission denied — Settings → Safari → Motion & Orientation';
+        return false;
+      }
+    } catch(e){ return false; }
+  }
+  window.addEventListener('deviceorientationabsolute', onOrient, true);
+  window.addEventListener('deviceorientation', onOrient, true);
+  return true;
+}
+
+function renderCompass(){
+  const c = $('compass');
+  c.classList.toggle('follow', headUp);
+  $('compassLbl').textContent =
+    headUp && heading !== null ? Math.round(heading) + '°' : 'N';
+}
+
+$('compass').onclick = async () => {
+  if (headUp){                                  // following → snap back to north
+    headUp = false; S.headUp = false; save();
+    cancelAnimationFrame(bearingRaf); bearingRaf = 0;
+    animBearingTo(0);
+    renderCompass();
+    return;
+  }
+  if (Math.abs(angDiff(bearing, 0)) > 0.5){     // hand-rotated → north first
+    animBearingTo(0); renderCompass(); return;
+  }
+  if (!compassLive && !(await enableCompass())) return;
+  headUp = true; S.headUp = true; save();
+  renderCompass(); requestBearing();
+};
+
+function animBearingTo(target){
+  const from = bearing, d = angDiff(target, from), t0 = performance.now(), dur = 300;
+  const step = now => {
+    const k = Math.min(1, (now - t0) / dur);
+    const e = 1 - Math.pow(1 - k, 3);
+    bearing = norm360(from + d * e);
+    applyTransform();
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+$('btnTilt').onclick = () => animTilt(tilt > 1 ? 0 : TILT_3D);
+
+/* ---- Gestures --------------------------------------------------------
+   One finger pans, or drags a vertex. Two fingers pinch-zoom and twist to
+   rotate, or — moved together, vertically, without pinching — tilt. The mode
+   locks on whichever of those the fingers commit to first, so a pinch can't
+   quietly become a tilt halfway through.                                   */
+const wrap = $('mapWrap');
+const ptrs = new Map();
+let one = null, two = null, wrapRect = null;
+
+const sp = e => ({ x: e.clientX - wrapRect.left, y: e.clientY - wrapRect.top });
+const mid  = (a, b) => ({ x:(a.x + b.x)/2, y:(a.y + b.y)/2 });
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const ang  = (a, b) => Math.atan2(b.y - a.y, b.x - a.x) / RAD;
+
+/** Hit-test in SCREEN space, since that is where the fingertip actually is. */
+function hitVertex(p){
+  for (let i = pts.length - 1; i >= 0; i--){
+    const cp = map.latLngToContainerPoint(pts[i]);
+    const s  = fwd(cp.x, cp.y);
+    if (Math.hypot(s.x - p.x, s.y - p.y) < 26) return i;
+  }
+  return -1;
+}
+
+wrap.addEventListener('pointerdown', e => {
+  if (e.target.closest('.mapbtn, .leaflet-control')) return;
+  wrapRect = wrap.getBoundingClientRect();
+  syncView();
+  ptrs.set(e.pointerId, sp(e));
+  try { wrap.setPointerCapture(e.pointerId); } catch(_){}
+
+  if (ptrs.size === 1){
+    const p = sp(e);
+    one = { start:p, prev:p, prevCp:inv(p.x, p.y),
+            t0:performance.now(), moved:0, vtx:hitVertex(p) };
+    two = null;
+  } else if (ptrs.size === 2){
+    const [a, b] = [...ptrs.values()];
+    two = { d0:dist(a,b), a0:ang(a,b), z0:map.getZoom(), b0:bearing, tilt0:tilt,
+            m0:mid(a,b), prevM:mid(a,b), mode:null };
+    one = null;
+  }
+});
+
+wrap.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.set(e.pointerId, sp(e));
+
+  if (one && ptrs.size === 1){
+    const p = sp(e);
+    one.moved = Math.max(one.moved, Math.hypot(p.x - one.start.x, p.y - one.start.y));
+    if (one.vtx >= 0){
+      const cp = inv(p.x, p.y), ll = map.containerPointToLatLng(cp);
+      pts[one.vtx] = { lat:ll.lat, lng:ll.lng };
+      vtxMarkers[one.vtx] && vtxMarkers[one.vtx].setLatLng(ll);
+      liveLine();
+    } else if (e.shiftKey && e.pointerType === 'mouse'){
+      // Desktop has no second finger, so shift-drag stands in for the two-finger
+      // rotate and tilt. Panning is suppressed while it does.
+      if (headUp){ headUp = false; S.headUp = false; save(); renderCompass(); }
+      bearing = norm360(bearing - (p.x - one.prev.x) * 0.4);
+      setTilt(tilt - (p.y - one.prev.y) * 0.25, false);
+      one.prevCp = inv(p.x, p.y);          // transform changed; re-anchor the pan
+    } else {
+      // Pan by keeping the ground under the finger: convert both the previous
+      // and current touch to container points and move the map by the gap.
+      const cp = inv(p.x, p.y);
+      map.panBy([one.prevCp.x - cp.x, one.prevCp.y - cp.y], { animate:false });
+      one.prevCp = cp;
+    }
+    one.prev = p;
+    return;
+  }
+
+  if (two && ptrs.size >= 2){
+    const [a, b] = [...ptrs.values()];
+    const dScale = Math.abs(dist(a,b) / two.d0 - 1);
+    const dRot   = Math.abs(angDiff(ang(a,b), two.a0));
+    const dTilt  = mid(a,b).y - two.m0.y;
+
+    if (!two.mode){
+      if (dScale > 0.10 || dRot > 10) two.mode = 'zoomrot';
+      else if (Math.abs(dTilt) > 24)  two.mode = 'tilt';
+      else return;                                   // not committed yet
+    }
+
+    if (two.mode === 'tilt'){
+      // Drag up to pitch into the view; the whole range is about half a screen.
+      setTilt(two.tilt0 - dTilt * (MAX_TILT / (vH * 0.45)), false);
+      two.prevM = mid(a,b);
+      return;
+    }
+
+    // Bearing and tilt change the projection, so the previous anchor has to be
+    // re-derived under the NEW transform or the pan below jumps.
+    const nb = norm360(two.b0 - angDiff(ang(a,b), two.a0));
+    if (Math.abs(angDiff(nb, bearing)) > 0.01){
+      if (headUp){ headUp = false; S.headUp = false; save(); renderCompass(); }
+      bearing = nb; applyTransform();
+    }
+    const m = mid(a,b);
+    const prevCp = inv(two.prevM.x, two.prevM.y), cp = inv(m.x, m.y);
+    map.panBy([prevCp.x - cp.x, prevCp.y - cp.y], { animate:false });
+    map.setZoomAround(cp, two.z0 + Math.log2(dist(a,b) / two.d0), { animate:false });
+    two.prevM = m;
+  }
+});
+
+function endPointer(e){
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.delete(e.pointerId);
+  try { wrap.releasePointerCapture(e.pointerId); } catch(_){}
+
+  if (one){
+    // A tap — short, still, not on a vertex — drops a point, as it always has.
+    if (one.moved < 9 && performance.now() - one.t0 < 400 && one.vtx < 0 && ptrs.size === 0){
+      const ll = map.containerPointToLatLng(inv(one.start.x, one.start.y));
+      pts.push({ lat:ll.lat, lng:ll.lng });
+      renderPath();
+    } else if (one.vtx >= 0){
+      renderPath();
+    }
+    one = null;
+  }
+  if (ptrs.size === 1){                 // one finger lifted mid-pinch: keep panning
+    const p = [...ptrs.values()][0];
+    one = { start:p, prevCp:inv(p.x, p.y), t0:0, moved:99, vtx:-1 };
+    two = null;
+  } else if (ptrs.size === 0){
+    two = null;
+    if (S.tilt !== Math.round(tilt)){ S.tilt = Math.round(tilt); save(); }
+  }
+}
+wrap.addEventListener('pointerup', endPointer);
+wrap.addEventListener('pointercancel', endPointer);
+
+/* The visible box also changes without a window resize — Safari collapsing its
+   toolbars mid-round, or the hint under the total wrapping to a second line. The
+   projection is built on its exact size, so stale numbers would put every tap
+   slightly off the thing you aimed at. Watch the box itself. */
+if (window.ResizeObserver) new ResizeObserver(() => {
+  if (activeTab !== 'map') return;
+  syncView();
+}).observe($('mapWrap'));
+window.addEventListener('resize', syncView);
+if (screen.orientation) screen.orientation.addEventListener('change',
+  () => setTimeout(() => { map.invalidateSize(); syncView(); }, 250));
 
 function renderPath(){
   vtxMarkers.forEach(m => map.removeLayer(m));  vtxMarkers = [];
@@ -581,16 +1086,16 @@ function renderPath(){
     line = L.polyline(pts, { color:'#4ade80', weight:3, opacity:.95, dashArray:'1,0' }).addTo(map);
   }
 
+  // Not Leaflet-draggable: L.Draggable works in raw screen deltas, which rotation
+  // and tilt make meaningless. The gesture controller drags these instead, by
+  // unprojecting the fingertip through inv().
   pts.forEach((p, i) => {
     const last = i === pts.length - 1;
-    const m = L.marker(p, {
-      draggable: true,
+    vtxMarkers.push(L.marker(p, {
+      interactive:false, keyboard:false,
       icon: L.divIcon({ className:'', html:`<div class="vtx${last?' pin':''}"></div>`,
                         iconSize:[15,15], iconAnchor:[7.5,7.5] })
-    }).addTo(map);
-    m.on('drag',    e => { pts[i] = { lat:e.latlng.lat, lng:e.latlng.lng }; liveLine(); });
-    m.on('dragend', () => renderPath());
-    vtxMarkers.push(m);
+    }).addTo(map));
   });
 
   let total = 0;
@@ -601,7 +1106,7 @@ function renderPath(){
     segLabels.push(L.marker(mid, {
       interactive:false,
       icon: L.divIcon({ className:'',
-        html:`<div class="seg-label">${toDisp(d).toFixed(0)} ${unitAbbr()}</div>`,
+        html:`<div class="seg-label billboard">${toDisp(d).toFixed(0)} ${unitAbbr()}</div>`,
         iconSize:[0,0], iconAnchor:[0,8] })
     }).addTo(map));
   }
@@ -1057,7 +1562,10 @@ function renderDevice(){
 /* =======================================================================
    BOOT
    ======================================================================= */
-window.addEventListener('resize', () => { layoutVideo(); if (activeTab==='map') map.invalidateSize(); });
+window.addEventListener('resize', () => {
+  layoutVideo();
+  if (activeTab === 'map'){ map.invalidateSize(); syncView(); }
+});
 // The viewport also resizes without a window resize — the calibration warning
 // appearing, or Safari collapsing its toolbars mid-round. Both change the cover
 // fit, so re-fit whenever the box itself changes.
@@ -1066,6 +1574,15 @@ window.addEventListener('orientationchange', () => setTimeout(() => { layoutVide
 
 renderUnits();
 renderPath();
+syncView();
+setTilt(S.tilt || 0, false);
+renderCompass();
+// Head-up needs the magnetometer, and iOS will not grant it without a gesture —
+// so a saved preference can only be honoured on platforms that don't gate it.
+if (S.headUp && !(window.DeviceOrientationEvent &&
+    typeof DeviceOrientationEvent.requestPermission === 'function')){
+  enableCompass().then(ok => { if (ok){ headUp = true; renderCompass(); requestBearing(); } });
+}
 startGeo();
 // Return to whichever tab was in use; on the rangefinder this also auto-resumes
 // the camera, so an iOS reload is nearly invisible.
